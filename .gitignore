@@ -1,0 +1,47 @@
+# --- Folder Filtering ---
+# Ignore all directories by default
+__pycache__/
+backups/
+music/
+static/
+templates/
+
+# --- Python Environment & Build ---
+# Ignore compiled python files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# Ignore virtual environments
+venv/
+.venv/
+env/
+ENV/
+bin/
+lib/
+include/
+
+# Ignore distribution/build folders
+dist/
+build/
+*.egg-info/
+
+# --- Environment Variables & Secrets ---
+# Never upload API keys or local settings
+.env
+.flaskenv
+local_settings.py
+
+# --- IDE & OS Specific ---
+# macOS files
+.DS_Store
+
+# VS Code / PyCharm / Sublime
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# --- Project Specific Logs ---
+*.log
