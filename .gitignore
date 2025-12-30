@@ -45,3 +45,5 @@ local_settings.py
 
 # --- Project Specific Logs ---
 *.log
+
+._.DS_Store
