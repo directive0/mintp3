@@ -47,3 +47,5 @@ local_settings.py
 *.log
 
 ._.DS_Store
+
+._main.py
