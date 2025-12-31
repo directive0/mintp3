@@ -113,10 +113,17 @@ class VLCPlayer:
 		except:
 			return False
 
-	def rescan_library(self, directory="music/"):
-		"""Clears and reloads the directory."""
+	def set_music_dir(self, path):
+		"""Resolves and stores the music directory path."""
+		import os
+		self.music_dir = os.path.abspath(os.path.expanduser(path))
+
+	def rescan_library(self, path=None):
+		"""Rescans the library using the stored path if none is provided."""
+		target_path = path if path else self.music_dir
+		# ... existing rescan logic using target_path ...
 		self.stop()
-		return self.play_directory(directory)
+		return self.play_directory(target_path)
 
 	def is_media_loaded(self):
 		if self.is_playlist_mode:

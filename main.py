@@ -322,16 +322,27 @@ class MintP3:
 # --- Logic ---
 player = VLCPlayer()
 conn = ConnectivityManager() 
+
+config_data = conn.load_config()
+player.set_music_dir(config_data["music_dir"])
+
 display = MintP3(player, conn)
+
+if not os.path.isdir(player.music_dir):
+	display.draw_message("Path Not Found", header="Error")
+else:
+	player.play_directory(player.music_dir)
+	# ... rest of startup ...
+	player.play()
+	player.toggle_play()
+
 webui = Mp3PlayerWebUI()
 webui.set_player(player)
 webui.start()
 bt_thread = Thread(target=bt_headset_thread, args=(player, conn))
 bt_thread.daemon = True; bt_thread.start()
 
-player.play_directory("music/")
-player.play()
-player.toggle_play()
+
 current_view = "main_menu"
 view_stack = [] 
 backstat = True
@@ -511,7 +522,9 @@ try:
 			display.draw_list_menu(display.header_title, display.filtered_items, display.item_cursor)
 
 		elif current_view == "settings":
+
 			num_items = 7
+			
 			if btn[2]:
 				btn[2] = False
 				if display.cursor_idx == 3: 
@@ -522,13 +535,15 @@ try:
 					current_view = "wifi_menu"
 				elif display.cursor_idx == 5: 
 					display.draw_message("Rescanning...", header="Settings")
-					player.rescan_library("music/")
+					# No need to load config or resolve paths here anymore
+					player.rescan_library() 
 					display.draw_message("Done", header="Settings")
 					time.sleep(1)
 				elif display.cursor_idx == 6: 
 					push_state()
 					current_view = "confirm_shutdown"
 				else: display.is_editing = not display.is_editing
+
 			if not display.is_editing:
 				if btn[1]: 
 					btn[1] = False
@@ -545,21 +560,35 @@ try:
 			display.draw_settings(player._shuffle_enabled, backstat, player.get_volume())
 
 		elif current_view == "wifi_menu":
-			wf_on = conn.is_wifi_on(); wf_items = [f"WiFi: {'ON' if wf_on else 'OFF'}", "Back"]
-			if btn[1]: 
-				btn[1] = False
-				display.wifi_cursor = (display.wifi_cursor - 1) % 2
-			if btn[3]: 
-				btn[3] = False; display.wifi_cursor = (display.wifi_cursor + 1) % 2
-			if btn[2]:
-				btn[2] = False
-				if display.wifi_cursor == 0: conn.toggle_wifi(not wf_on)
-				else:
-					if view_stack:
-						state = view_stack.pop()
-						current_view = state['view']
-					else: current_view = "settings"
-			display.draw_list_menu("Wi-Fi", wf_items, display.wifi_cursor)
+					wf_on = conn.is_wifi_on()
+					ap_on = conn.is_ap_on()
+					wf_items = [
+						f"WiFi: {'ON' if wf_on else 'OFF'}", 
+						f"Hotspot: {'ON' if ap_on else 'OFF'}", 
+						"Back"
+					]
+					
+					if btn[1]: 
+						btn[1] = False
+						display.wifi_cursor = (display.wifi_cursor - 1) % len(wf_items)
+					if btn[3]: 
+						btn[3] = False
+						display.wifi_cursor = (display.wifi_cursor + 1) % len(wf_items)
+						
+					if btn[2]:
+						btn[2] = False
+						if display.wifi_cursor == 0:
+							conn.toggle_wifi(not wf_on)
+						elif display.wifi_cursor == 1:
+							display.draw_message("Starting AP...", header="Wi-Fi")
+							conn.toggle_ap(not ap_on)
+						else:
+							if view_stack:
+								state = view_stack.pop()
+								current_view = state['view']
+							else:
+								current_view = "settings"
+					display.draw_list_menu("Wi-Fi", wf_items, display.wifi_cursor)
 
 		elif current_view == "bt_menu":
 			bt_on = conn.is_bt_on(); bt_items = ["Pair New Device", f"Re-Pair {conn.paired_name[:10]}", f"BT: {'ON' if bt_on else 'OFF'}", "Back"]
