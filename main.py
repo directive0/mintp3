@@ -584,21 +584,26 @@ try:
 			display.draw_list_menu("Bluetooth", bt_items, display.bt_cursor)
 
 		elif current_view == "confirm_shutdown":
-			if btn[1] or btn[3]: 
-				btn[1] = btn[3] = False
-				display.shutdown_cursor = 1 - display.shutdown_cursor
-			if btn[2]:
-				btn[2] = False
-				if display.shutdown_cursor == 1: os.system("sudo shutdown -h now")
-				else:
-					if view_stack: current_view = view_stack.pop()['view']
-					else: current_view = "settings"
-			with canvas(display.device) as draw:
-				display.draw_status_bar(draw); display.heading.draw = display.list_item.draw = draw
-				display.draw_scrolling_text("Shutdown?", display.HEADER_Y, display.titlefont, draw, max_w=90, scroll_var="header")
-				display.list_item.set_string("Cancel"); display.list_item.push(30, 30)
-				display.list_item.set_string("Power Off"); display.list_item.push(30, 42)
-				draw.text((20, 30 if display.shutdown_cursor == 0 else 42), ">", font=font, fill="white")
+					if btn[1] or btn[3]: 
+						btn[1] = btn[3] = False
+						display.shutdown_cursor = 1 - display.shutdown_cursor
+					if btn[2]:
+						btn[2] = False
+						if display.shutdown_cursor == 1: os.system("sudo shutdown -h now")
+						else:
+							if view_stack: current_view = view_stack.pop()['view']
+							else: current_view = "settings"
+					with canvas(display.device) as draw:
+						display.draw_status_bar(draw,"Shutdown?")
+						display.heading.draw = display.list_item.draw = draw
+						
+						# Define positions to ensure alignment
+						options = ["Cancel", "Power Off"]
+						for i, text in enumerate(options):
+							prefix = "> " if display.shutdown_cursor == i else "  "
+							display.list_item.set_string(prefix + text)
+							# Using LAYOUT constants to match the rest of the menus
+							display.list_item.push(display.LAYOUT_X_OFFSET, display.LAYOUT_Y_START + (i * display.LINE_SPACING))
 
 		elif current_view == "about":
 			if btn[1] or btn[2] or btn[3]:
