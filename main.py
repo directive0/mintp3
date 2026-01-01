@@ -24,8 +24,12 @@ from webui import Mp3PlayerWebUI
 from PIL import ImageFont, Image, ImageDraw
 import evdev
 from evdev import ecodes
-
+import random
+import json
+from PIL import Image, ImageOps
+from luma.core.render import canvas
 # Attempt to import psutil for richer metrics; fallback to shell if missing
+
 try:
 	import psutil
 except ImportError:
@@ -108,6 +112,174 @@ class LabelObj(object):
 		if len(self.string) > 16: self.push(10, y) 
 		else: self.center(y, x, w)
 
+
+class MintPet:
+	def __init__(self):
+		self.DATA_FILE = "assets/pet_data.json"
+		self.SPRITE_PATH = "assets/mintpet_spritesheet.png"
+		self.box_size = 18 
+		self.x, self.y = 64, 45
+		self.dx, self.dy = 0, 0
+		self.facing_right = False  # Track direction memory
+
+		# Stats
+		self.hunger = 100
+		self.happiness = 100
+		self.stage = 0 
+		self.test_timer = time.time()
+		self.load_stats()
+		
+		# Animation & State
+		self.last_update = time.time()
+		self.last_playing_time = time.time()
+		self.x, self.y = 64, 45 
+		self.dx, self.dy = 0, 0
+		self.is_dancing = False
+		self.is_sleeping = False
+
+		try:
+			# Load, convert to 1-bit, and INVERT the colors immediately
+			img = Image.open(self.SPRITE_PATH).convert("1")
+			self.atlas = ImageOps.invert(img) 
+		except:
+			self.atlas = None
+
+	def get_current_sprite(self):
+		if not self.atlas:
+			return None
+		
+		col = self.stage
+		
+		if self.is_sleeping:
+			row = 2
+		elif self.is_dancing:
+			row = int(time.time() * 2) % 2 
+		else:
+			row = 0
+			
+		left = col * self.box_size
+		top = row * self.box_size
+		
+		sprite = self.atlas.crop((left, top, left + self.box_size, top + self.box_size))
+		
+		# Use the persistent direction memory
+		if self.facing_right:
+			sprite = ImageOps.mirror(sprite)
+			
+		return sprite
+
+	def update(self, is_playing, volume):
+		now = time.time()
+		
+		# Cycle stages every 5 seconds for testing
+		if now - self.test_timer >= 5.0:
+			self.stage = (self.stage + 1) % 6
+			self.test_timer = now
+
+		self.is_dancing = is_playing
+		if is_playing:
+			self.last_playing_time = now
+			self.is_sleeping = False
+		elif now - self.last_playing_time > 60:
+			self.is_sleeping = True
+
+		if now - self.last_update >= 1.0:
+			if not self.is_sleeping:
+				if is_playing:
+					# Music active: High energy dancing
+					self.dx = random.choice([-3, -2, 2, 3])
+					self.dy = random.choice([-2, -1, 1, 2])
+					self.happiness = min(100, self.happiness + (2 if volume > 70 else 1))
+				else:
+					# Music stopped: Lethargic drifting
+					if random.random() < 0.2:
+						self.dx, self.dy = random.choice([-1, 1]), 0
+					else:
+						self.dx, self.dy = 0, 0
+					self.happiness = max(0, self.happiness - 1)
+				
+				if int(now) % 30 == 0:
+					self.hunger = max(0, self.hunger - 2)
+					self.save_stats()
+			else:
+				self.dx, self.dy = 0, 0 # No movement while sleeping
+				
+			self.last_update = now
+
+		if self.dx > 0:
+			self.facing_right = True
+		elif self.dx < 0:
+			self.facing_right = False
+
+		# Screen boundary logic
+		self.x = max(2, min(128 - self.box_size - 2, self.x + self.dx))
+		self.y = max(30, min(48, self.y + self.dy))
+		
+
+	def draw(self, device, font, cursor, show_menu=False):
+		with canvas(device) as draw:
+			# Header / Status Bar
+			draw.text((42, 1), "MintPet", font=font, fill="white")
+			draw.line((0, 11, 128, 11), fill="white")
+			
+			sprite = self.get_current_sprite()
+			if sprite:
+				# px, py is the "floor" anchor. Since box is 18px, 
+				# we draw from (y - 18) to y.
+				draw.bitmap((self.x, self.y - self.box_size), sprite, fill="white")
+			
+			# UI Stats at the bottom
+			draw.text((5, 54), f"HNG:{self.hunger}%", font=font, fill="white")
+			draw.text((72, 54), f"HAP:{self.happiness}%", font=font, fill="white")
+			
+			# Testing Stage Label
+			draw.text((112, 1), f"{self.stage}", font=font, fill="white")
+
+			if show_menu:
+				items = ["Feed", "Play", "Back"]
+				# Draw menu box
+				draw.rectangle([8, 14, 55, 43], fill="black", outline="white")
+				for i, text in enumerate(items):
+					prefix = ">" if i == cursor else " "
+					draw.text((12, 16 + (i * 9)), f"{prefix}{text}", font=font, fill="white")
+
+	def load_stats(self):
+		if os.path.exists(self.DATA_FILE):
+			try:
+				with open(self.DATA_FILE, 'r') as f:
+					data = json.load(f)
+					self.hunger = data.get("hunger", 100)
+					self.happiness = data.get("happiness", 100)
+					self.stage = data.get("stage", 0)
+			except: pass
+
+	def save_stats(self):
+		try:
+			os.makedirs(os.path.dirname(self.DATA_FILE), exist_ok=True)
+			with open(self.DATA_FILE, 'w') as f:
+				json.dump({"hunger": self.hunger, "happiness": self.happiness, "stage": self.stage}, f)
+		except: pass
+
+	def on_track_change(self):
+		"""Pet gets a boost when a new song starts."""
+		self.is_sleeping = False
+		# A new track gives a small boost to happiness
+		self.happiness = min(100, self.happiness + 5)
+		# Waking up resets the last playing time to now
+		self.last_playing_time = time.time()
+		self.save_stats()
+
+	def feed(self):
+		"""Standard feeding logic."""
+		self.is_sleeping = False
+		self.hunger = min(100, self.hunger + 20)
+		self.save_stats()
+
+	def play(self):
+		"""Standard play logic."""
+		self.is_sleeping = False
+		self.happiness = min(100, self.happiness + 15)
+		self.save_stats()
 class MintP3:
 	LAYOUT_X_OFFSET = 10
 	LAYOUT_Y_START = 20
@@ -129,6 +301,9 @@ class MintP3:
 		self.albumlabel = LabelObj("", self.font, None) 
 		self.time_label = LabelObj("", self.font, None)
 		self.list_item = LabelObj("", self.font, None)
+
+		self.pet = MintPet()
+		self.pet_cursor = 0
 		
 		self.cursor_idx = 0 
 		self.is_editing = False
@@ -348,6 +523,8 @@ view_stack = []
 backstat = True
 display.device.backlight(not backstat)
 
+pet_menu_active = False
+
 def push_state():
 	state = {
 		'view': current_view,
@@ -367,7 +544,12 @@ def push_state():
 
 try:
 	while True:
+		
+		is_playing = player.get_state() == "Playing"
+		vol = player.get_volume()
+		display.pet.update(is_playing, vol)
 		status = player.get_current_song_info()
+
 		if status: webui.update_status(status)
 		if not hasattr(glob, 'eventlist') or len(glob.eventlist) < 2:
 			# Redraw loop for animations/scrolling even without input
@@ -420,7 +602,7 @@ try:
 			player.toggle_shuffle()
 
 		if current_view == "main_menu":
-			menu = ["Now Playing", "Library", "Settings", "About"]
+			menu = ["Now Playing", "Library", "Settings", "MintPet", "About"]
 			if btn[1]:
 				btn[1] = False
 				display.main_menu_cursor = (display.main_menu_cursor - 1) % len(menu)
@@ -430,7 +612,7 @@ try:
 			if btn[2]:
 				btn[2] = False
 				push_state()
-				mapping = {0:"playing", 1:"category_select", 2:"settings", 3:"about"}
+				mapping = {0:"playing", 1:"category_select", 2:"settings", 3:"pet", 4:"about"}
 				current_view = mapping[display.main_menu_cursor]
 				display.header_title = menu[display.main_menu_cursor]
 				display.scroll_pos = 0; display.header_scroll_pos = 0
@@ -447,7 +629,8 @@ try:
 			if btn[3]: 
 				btn[3] = False
 				player.next_track()
-				display.scroll_pos = 0 
+				display.pet.on_track_change() # Pet gets "fed" by new music
+				display.scroll_pos = 0
 			display.draw_playing()
 		
 		elif current_view == "category_select":
@@ -661,6 +844,42 @@ try:
 							display.list_item.set_string(prefix + text)
 							# Using LAYOUT constants to match the rest of the menus
 							display.list_item.push(display.LAYOUT_X_OFFSET, display.LAYOUT_Y_START + (i * display.LINE_SPACING))
+
+		elif current_view == "pet":
+			# Toggle menu or select option with Center Button (btn[2])
+			if btn[2]:
+				btn[2] = False
+				if not pet_menu_active:
+					pet_menu_active = True
+				else:
+					# Menu is active, handle selection
+					if display.pet_cursor == 0: 
+						display.pet.feed()
+					elif display.pet_cursor == 1: 
+						display.pet.play()
+					elif display.pet_cursor == 2:
+						# Back option: clean up state and return
+						pet_menu_active = False
+						if view_stack:
+							state = view_stack.pop()
+							current_view = state['view']
+						else:
+							current_view = "main_menu"
+					
+					# Close menu after any selection
+					pet_menu_active = False
+
+			# Navigation within the pet menu
+			if pet_menu_active:
+				if btn[1]: # Up
+					btn[1] = False
+					display.pet_cursor = (display.pet_cursor - 1) % 3
+				if btn[3]: # Down
+					btn[3] = False
+					display.pet_cursor = (display.pet_cursor + 1) % 3
+
+			# The Pet class now handles its own rendering entirely
+			display.pet.draw(display.device, font, display.pet_cursor, pet_menu_active)
 
 		elif current_view == "about":
 			if btn[1] or btn[2] or btn[3]:
