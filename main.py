@@ -118,18 +118,16 @@ class MintPet:
 		self.DATA_FILE = "assets/pet_data.json"
 		self.SPRITE_PATH = "assets/mintpet_spritesheet.png"
 		self.box_size = 18 
-		self.x, self.y = 64, 45
-		self.dx, self.dy = 0, 0
-		self.facing_right = False  # Track direction memory
-
-		# Stats
+		
+		# Persisted Stats
 		self.hunger = 100
 		self.happiness = 100
 		self.stage = 0 
-		self.test_timer = time.time()
-		self.load_stats()
+		self.xp = 0
+		self.facing_right = False
 		
-		# Animation & State
+		# Session State
+		self.listen_threshold_met = False
 		self.last_update = time.time()
 		self.last_playing_time = time.time()
 		self.x, self.y = 64, 45 
@@ -137,111 +135,13 @@ class MintPet:
 		self.is_dancing = False
 		self.is_sleeping = False
 
+		self.load_stats() # Load saved data on init
+
 		try:
-			# Load, convert to 1-bit, and INVERT the colors immediately
 			img = Image.open(self.SPRITE_PATH).convert("1")
 			self.atlas = ImageOps.invert(img) 
 		except:
 			self.atlas = None
-
-	def get_current_sprite(self):
-		if not self.atlas:
-			return None
-		
-		col = self.stage
-		
-		if self.is_sleeping:
-			row = 2
-		elif self.is_dancing:
-			row = int(time.time() * 2) % 2 
-		else:
-			row = 0
-			
-		left = col * self.box_size
-		top = row * self.box_size
-		
-		sprite = self.atlas.crop((left, top, left + self.box_size, top + self.box_size))
-		
-		# Use the persistent direction memory
-		if self.facing_right:
-			sprite = ImageOps.mirror(sprite)
-			
-		return sprite
-
-	def update(self, is_playing, volume):
-		now = time.time()
-		
-		# Cycle stages every 5 seconds for testing
-		if now - self.test_timer >= 5.0:
-			self.stage = (self.stage + 1) % 6
-			self.test_timer = now
-
-		self.is_dancing = is_playing
-		if is_playing:
-			self.last_playing_time = now
-			self.is_sleeping = False
-		elif now - self.last_playing_time > 60:
-			self.is_sleeping = True
-
-		if now - self.last_update >= 1.0:
-			if not self.is_sleeping:
-				if is_playing:
-					# Music active: High energy dancing
-					self.dx = random.choice([-3, -2, 2, 3])
-					self.dy = random.choice([-2, -1, 1, 2])
-					self.happiness = min(100, self.happiness + (2 if volume > 70 else 1))
-				else:
-					# Music stopped: Lethargic drifting
-					if random.random() < 0.2:
-						self.dx, self.dy = random.choice([-1, 1]), 0
-					else:
-						self.dx, self.dy = 0, 0
-					self.happiness = max(0, self.happiness - 1)
-				
-				if int(now) % 30 == 0:
-					self.hunger = max(0, self.hunger - 2)
-					self.save_stats()
-			else:
-				self.dx, self.dy = 0, 0 # No movement while sleeping
-				
-			self.last_update = now
-
-		if self.dx > 0:
-			self.facing_right = True
-		elif self.dx < 0:
-			self.facing_right = False
-
-		# Screen boundary logic
-		self.x = max(2, min(128 - self.box_size - 2, self.x + self.dx))
-		self.y = max(30, min(48, self.y + self.dy))
-		
-
-	def draw(self, device, font, cursor, show_menu=False):
-		with canvas(device) as draw:
-			# Header / Status Bar
-			draw.text((42, 1), "MintPet", font=font, fill="white")
-			draw.line((0, 11, 128, 11), fill="white")
-			
-			sprite = self.get_current_sprite()
-			if sprite:
-				# px, py is the "floor" anchor. Since box is 18px, 
-				# we draw from (y - 18) to y.
-				draw.bitmap((self.x, self.y - self.box_size), sprite, fill="white")
-			
-			# UI Stats at the bottom
-			draw.text((5, 54), f"HNG:{self.hunger}%", font=font, fill="white")
-			draw.text((72, 54), f"HAP:{self.happiness}%", font=font, fill="white")
-			
-			# Testing Stage Label
-			draw.text((112, 1), f"{self.stage}", font=font, fill="white")
-
-			if show_menu:
-				items = ["Feed", "Play", "Back"]
-				# Draw menu box
-				draw.rectangle([8, 14, 55, 43], fill="black", outline="white")
-				for i, text in enumerate(items):
-					prefix = ">" if i == cursor else " "
-					draw.text((12, 16 + (i * 9)), f"{prefix}{text}", font=font, fill="white")
 
 	def load_stats(self):
 		if os.path.exists(self.DATA_FILE):
@@ -251,35 +151,118 @@ class MintPet:
 					self.hunger = data.get("hunger", 100)
 					self.happiness = data.get("happiness", 100)
 					self.stage = data.get("stage", 0)
+					self.xp = data.get("xp", 0) # Tracked full songs
+					self.facing_right = data.get("facing_right", False)
 			except: pass
 
 	def save_stats(self):
 		try:
 			os.makedirs(os.path.dirname(self.DATA_FILE), exist_ok=True)
 			with open(self.DATA_FILE, 'w') as f:
-				json.dump({"hunger": self.hunger, "happiness": self.happiness, "stage": self.stage}, f)
+				json.dump({
+					"hunger": self.hunger,
+					"happiness": self.happiness,
+					"stage": self.stage,
+					"xp": self.xp,
+					"facing_right": self.facing_right
+				}, f)
 		except: pass
 
+	def update_evolution(self):
+		"""Hook to advance the musical note stage."""
+		# Evolve every 10 full songs listened to
+		new_stage = min(5, self.xp // 10)
+		if new_stage > self.stage:
+			self.stage = new_stage
+			self.save_stats()
+
+	def finish_track(self):
+		"""Called when a song ends. Awards XP if 90% was reached."""
+		if self.listen_threshold_met:
+			self.xp += 1
+			self.happiness = min(100, self.happiness + 10)
+			self.update_evolution() # Check for evolution
+			self.save_stats()
+		# Reset for next track
+		self.listen_threshold_met = False
+
 	def on_track_change(self):
-		"""Pet gets a boost when a new song starts."""
 		self.is_sleeping = False
-		# A new track gives a small boost to happiness
-		self.happiness = min(100, self.happiness + 5)
-		# Waking up resets the last playing time to now
+		self.listen_threshold_met = False
 		self.last_playing_time = time.time()
-		self.save_stats()
+
+	def get_current_sprite(self):
+		if not self.atlas: return None
+		col = self.stage
+		if self.is_sleeping:
+			row = 2
+		elif self.is_dancing:
+			row = int(time.time() * 2) % 2 
+		else:
+			row = 0
+		left, top = col * self.box_size, row * self.box_size
+		sprite = self.atlas.crop((left, top, left + self.box_size, top + self.box_size))
+		if self.facing_right:
+			sprite = ImageOps.mirror(sprite)
+		return sprite
+
+	def update(self, is_playing, volume):
+		now = time.time()
+		self.is_dancing = is_playing
+		
+		if is_playing:
+			self.last_playing_time = now
+			self.is_sleeping = False
+		elif now - self.last_playing_time > 60:
+			self.is_sleeping = True
+
+		if now - self.last_update >= 1.0:
+			if not self.is_sleeping:
+				if is_playing:
+					self.dx = random.choice([-3, -2, 2, 3])
+					self.dy = random.choice([-2, -1, 1, 2])
+				else:
+					self.dx, self.dy = (random.choice([-1, 1]), 0) if random.random() < 0.2 else (0, 0)
+			else:
+				self.dx, self.dy = 0, 0
+			self.last_update = now
+
+		if self.dx > 0: self.facing_right = True
+		elif self.dx < 0: self.facing_right = False
+
+		self.x = max(2, min(128 - self.box_size - 2, self.x + self.dx))
+		self.y = max(30, min(48, self.y + self.dy))
+
+	def draw(self, device, font, cursor, show_menu=False):
+		with canvas(device) as draw:
+			draw.text((42, 1), "MintPet", font=font, fill="white")
+			draw.line((0, 11, 128, 11), fill="white")
+			sprite = self.get_current_sprite()
+			if sprite:
+				draw.bitmap((self.x, self.y - self.box_size), sprite, fill="white")
+			draw.text((5, 54), f"HNG:{self.hunger}%", font=font, fill="white")
+			draw.text((60, 54), f"HAP:{self.happiness}%", font=font, fill="white")
+			draw.text((110, 54), f"X:{self.xp}", font=font, fill="white") # Show XP
+
+			if show_menu:
+				draw.rectangle([8, 14, 55, 43], fill="black", outline="white")
+				items = ["Feed", "Play", "Back"]
+				for i, text in enumerate(items):
+					prefix = ">" if i == cursor else " "
+					draw.text((12, 16 + (i * 9)), f"{prefix}{text}", font=font, fill="white")
 
 	def feed(self):
-		"""Standard feeding logic."""
+		"""Restored: Increases hunger stat and saves."""
 		self.is_sleeping = False
 		self.hunger = min(100, self.hunger + 20)
 		self.save_stats()
 
 	def play(self):
-		"""Standard play logic."""
+		"""Restored: Increases happiness stat and saves."""
 		self.is_sleeping = False
 		self.happiness = min(100, self.happiness + 15)
 		self.save_stats()
+		
 class MintP3:
 	LAYOUT_X_OFFSET = 10
 	LAYOUT_Y_START = 20
@@ -544,8 +527,28 @@ def push_state():
 
 try:
 	while True:
-		
+
 		is_playing = player.get_state() == "Playing"
+
+
+		if is_playing:
+			# Corrected from get_elapsed() to get_current_time()
+			current_time = player.get_current_time() 
+			total_time = player.get_duration()
+
+			if total_time > 0:
+				progress = current_time / total_time
+				
+				# If we have listened to 90% of the song
+				if progress > 0.9:
+					display.pet.listen_threshold_met = True
+		
+		if player.has_just_finished(): 
+			# This now works because we added the method to VLCPlayer
+			display.pet.finish_track() 
+			# Check for evolution after awarding XP
+			display.pet.update_evolution()
+
 		vol = player.get_volume()
 		display.pet.update(is_playing, vol)
 		status = player.get_current_song_info()

@@ -130,6 +130,11 @@ class VLCPlayer:
 			return self.media_list is not None and self.media_list.count() > 0
 		return self.media is not None
 
+	def has_just_finished(self):
+		"""Returns True if the current track has reached the end (Stopped)."""
+		# VLC transitions to Stopped state when a single file or playlist finishes
+		return self.player.get_state() == vlc.State.Ended or self.player.get_state() == vlc.State.Stopped
+
 	def play_directory(self, directory_path):
 		if not os.path.isdir(directory_path):
 			return False
