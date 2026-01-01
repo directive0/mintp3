@@ -49,3 +49,5 @@ local_settings.py
 ._*
 
 ._main.py
+
+assets/pet_data.json

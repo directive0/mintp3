@@ -158,6 +158,7 @@ class VLCPlayer:
 					elif os.path.isdir(item_path):
 						add_files_from_directory(item_path)
 			except: pass
+			
 		add_files_from_directory(directory_path)
 		if files_added == 0: return False
 		self.media_list_player = self.instance.media_list_player_new()

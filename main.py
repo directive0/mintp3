@@ -148,42 +148,45 @@ class MintPet:
 			try:
 				with open(self.DATA_FILE, 'r') as f:
 					data = json.load(f)
+					# Use .get() with defaults to avoid KeyErrors if the file is old/corrupt
 					self.hunger = data.get("hunger", 100)
 					self.happiness = data.get("happiness", 100)
 					self.stage = data.get("stage", 0)
-					self.xp = data.get("xp", 0) # Tracked full songs
+					self.xp = data.get("xp", 0)
 					self.facing_right = data.get("facing_right", False)
-			except: pass
+			except Exception as e:
+				print(f"Error loading stats: {e}")
 
 	def save_stats(self):
 		try:
+			# Ensure the assets directory exists before writing
 			os.makedirs(os.path.dirname(self.DATA_FILE), exist_ok=True)
+			
+			stats_to_save = {
+				"hunger": self.hunger,
+				"happiness": self.happiness,
+				"stage": self.stage,
+				"xp": self.xp,
+				"facing_right": self.facing_right
+			}
+			
 			with open(self.DATA_FILE, 'w') as f:
-				json.dump({
-					"hunger": self.hunger,
-					"happiness": self.happiness,
-					"stage": self.stage,
-					"xp": self.xp,
-					"facing_right": self.facing_right
-				}, f)
-		except: pass
+				json.dump(stats_to_save, f)
+		except Exception as e:
+			print(f"Error saving stats: {e}")
 
 	def update_evolution(self):
-		"""Hook to advance the musical note stage."""
-		# Evolve every 10 full songs listened to
 		new_stage = min(5, self.xp // 10)
-		if new_stage > self.stage:
+		if new_stage != self.stage:
 			self.stage = new_stage
-			self.save_stats()
+			self.save_stats() # Save the new stage immediately
 
 	def finish_track(self):
-		"""Called when a song ends. Awards XP if 90% was reached."""
 		if self.listen_threshold_met:
 			self.xp += 1
 			self.happiness = min(100, self.happiness + 10)
-			self.update_evolution() # Check for evolution
-			self.save_stats()
-		# Reset for next track
+			self.update_evolution() # This must call save_stats internally
+			self.save_stats() # Force save here as well
 		self.listen_threshold_met = False
 
 	def on_track_change(self):
@@ -233,6 +236,28 @@ class MintPet:
 		self.x = max(2, min(128 - self.box_size - 2, self.x + self.dx))
 		self.y = max(30, min(48, self.y + self.dy))
 
+	def draw_staff(self, draw, start_y=20, spacing=4, line_width=1):
+		"""
+		Draws a five-line musical staff.
+		:param draw: The luma.core.render.canvas draw object.
+		:param start_y: The top-most line's Y position.
+		:param spacing: Vertical pixels between each line.
+		:param line_width: The thickness of the horizontal lines.
+		"""
+		# Draw the 5 horizontal lines
+		for i in range(5):
+			y = start_y + (i * spacing)
+			draw.line((0, y, 128, y), fill="white", width=line_width)
+
+		# Staff boundaries
+		bottom_y = start_y + (4 * spacing)
+		
+		# Thick bar line on the left (Start of staff)
+		draw.line((0, start_y, 0, bottom_y), fill="white", width=3)
+		
+		# Thin bar line on the right (End of screen)
+		draw.line((127, start_y, 127, bottom_y), fill="white", width=1)
+		
 	def draw(self, device, font, cursor, show_menu=False):
 		with canvas(device) as draw:
 			draw.text((42, 1), "MintPet", font=font, fill="white")
@@ -243,6 +268,9 @@ class MintPet:
 			draw.text((5, 54), f"HNG:{self.hunger}%", font=font, fill="white")
 			draw.text((60, 54), f"HAP:{self.happiness}%", font=font, fill="white")
 			draw.text((110, 54), f"X:{self.xp}", font=font, fill="white") # Show XP
+
+
+			self.draw_staff(draw, start_y=25, spacing=5, line_width=1)
 
 			if show_menu:
 				draw.rectangle([8, 14, 55, 43], fill="black", outline="white")
@@ -262,7 +290,7 @@ class MintPet:
 		self.is_sleeping = False
 		self.happiness = min(100, self.happiness + 15)
 		self.save_stats()
-		
+
 class MintP3:
 	LAYOUT_X_OFFSET = 10
 	LAYOUT_Y_START = 20
@@ -413,10 +441,15 @@ class MintP3:
 				tags = self.mp3_player.get_id3_tags()
 				
 				if tags:
-					self.draw_scrolling_text(tags.get('title', 'Unknown'), self.LAYOUT_Y_START - 2, self.titlefont, draw)
-					self.secondlabel.set_string(tags.get('artist', 'Unknown Artist')[:22])
+					# Ensure values are strings to prevent NoneType subscripting error
+					title = tags.get('title') or 'Unknown'
+					artist = tags.get('artist') or 'Unknown Artist'
+					album = tags.get('album') or 'Unknown Album'
+
+					self.draw_scrolling_text(str(title), self.LAYOUT_Y_START - 2, self.titlefont, draw)
+					self.secondlabel.set_string(str(artist)[:22])
 					self.secondlabel.center(self.LAYOUT_Y_START + 16, 0, screen_w)
-					self.albumlabel.set_string(tags.get('album', 'Unknown Album')[:22])
+					self.albumlabel.set_string(str(album)[:22])
 					self.albumlabel.center(self.LAYOUT_Y_START + 25, 0, screen_w)
 
 				bar_x, bar_w = self.draw_progress_bar(draw, self.mp3_player.get_progress())
@@ -528,26 +561,22 @@ def push_state():
 try:
 	while True:
 
-		is_playing = player.get_state() == "Playing"
-
-
-		if is_playing:
-			# Corrected from get_elapsed() to get_current_time()
-			current_time = player.get_current_time() 
-			total_time = player.get_duration()
-
-			if total_time > 0:
-				progress = current_time / total_time
-				
-				# If we have listened to 90% of the song
-				if progress > 0.9:
-					display.pet.listen_threshold_met = True
 		
-		if player.has_just_finished(): 
-			# This now works because we added the method to VLCPlayer
-			display.pet.finish_track() 
-			# Check for evolution after awarding XP
-			display.pet.update_evolution()
+		state = player.get_state()
+		is_playing = state == "Playing"
+		current_time = player.get_current_time() # Matches VLCPlayer.py
+		total_time = player.get_duration()
+
+		if state == "Playing" and total_time > 0:
+			# Once you pass 90%, the pet "notices" you are listening
+			if (current_time / total_time) > 0.9:
+				display.pet.listen_threshold_met = True
+
+		# VLC transitions to 'Stopped' or 'Ended' briefly between songs
+		# We check for these to award XP
+		if state in ["Stopped", "Unknown"] or player.has_just_finished():
+			if display.pet.listen_threshold_met:
+				display.pet.finish_track() # Awards XP and resets flag
 
 		vol = player.get_volume()
 		display.pet.update(is_playing, vol)
