@@ -601,16 +601,44 @@ try:
 				btn[2] = False
 				if display.bt_cursor == 0: 
 					display.draw_message("Scanning...", header="Bluetooth")
-					push_state()
-					display.discovered_bt = conn.discover_devices(); display.pairing_cursor = 0; current_view = "bt_pairing_select"
-				elif display.bt_cursor == 1: display.draw_message("Connecting...", header="Bluetooth"); conn.repair_existing()
-				elif display.bt_cursor == 2: conn.toggle_bluetooth(not bt_on)
-				else:
-					if view_stack:
-						state = view_stack.pop()
-						current_view = state['view']
-					else: current_view = "settings"
+					# Perform the scan
+					found_devices = conn.discover_devices()
+					
+					if found_devices:
+						push_state()
+						display.discovered_bt = found_devices
+						display.pairing_cursor = 0
+						current_view = "bt_pairing_select"
+					else:
+						display.draw_message("No Devices Found", header="Bluetooth")
+						time.sleep(1.5)
 			display.draw_list_menu("Bluetooth", bt_items, display.bt_cursor)
+
+		elif current_view == "bt_pairing_select":
+			# Create a list of names for the menu
+			device_names = [d['name'] for d in display.discovered_bt]
+			
+			if btn[1]: 
+				btn[1] = False
+				display.pairing_cursor = (display.pairing_cursor - 1) % len(device_names)
+			if btn[3]: 
+				btn[3] = False
+				display.pairing_cursor = (display.pairing_cursor + 1) % len(device_names)
+			
+			if btn[2]:
+				btn[2] = False
+				target = display.discovered_bt[display.pairing_cursor]
+				display.draw_message("Pairing...", header=target['name'][:10])
+				
+				if conn.pair_device(target['mac'], target['name']):
+					display.draw_message("Success!", header="Bluetooth")
+				else:
+					display.draw_message("Failed", header="Bluetooth")
+				
+				time.sleep(1.5)
+				current_view = "bt_menu" # Go back after attempt
+
+			display.draw_list_menu("Select Device", device_names, display.pairing_cursor)
 
 		elif current_view == "confirm_shutdown":
 					if btn[1] or btn[3]: 
