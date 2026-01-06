@@ -46,6 +46,12 @@ except:
 screen_w = 128
 screen_h = 64
 
+STREAMS = {
+	"Nectarine Radio": "http://nectarine.ers35.net:8000/necta192.mp3",
+	"FIP Radio": "http://icecast.radiofrance.fr/fip-midfi.mp3",
+	"KEXP": "https://kexp-mp3-128.streamguys1.com/kexp128.mp3"
+}
+
 # --- BT HEADSET HANDLER ---
 def bt_headset_thread(player, conn):
 	last_device_path = None
@@ -222,7 +228,7 @@ class MintPet:
 		if now - self.last_update >= 1.0:
 			if not self.is_sleeping:
 				if is_playing:
-					self.dx = random.choice([-3, -2, 2, 3])
+					self.dx = random.choice([-2, -1, 1, 2])
 					self.dy = random.choice([-2, -1, 1, 2])
 				else:
 					self.dx, self.dy = (random.choice([-1, 1]), 0) if random.random() < 0.2 else (0, 0)
@@ -258,10 +264,10 @@ class MintPet:
 		# Thin bar line on the right (End of screen)
 		draw.line((127, start_y, 127, bottom_y), fill="white", width=1)
 		
-	def draw(self, device, font, cursor, show_menu=False):
-		with canvas(device) as draw:
-			draw.text((42, 1), "MintPet", font=font, fill="white")
-			draw.line((0, 11, 128, 11), fill="white")
+	def draw(self, display, font, cursor, show_menu=False):
+		
+		with canvas(display.device) as draw:
+			display.draw_status_bar(draw, "MintPet") 
 			sprite = self.get_current_sprite()
 			if sprite:
 				draw.bitmap((self.x, self.y - self.box_size), sprite, fill="white")
@@ -335,6 +341,10 @@ class MintP3:
 		self.library_level = 0 
 		self.selected_artist = None
 		self.selected_album = None
+
+		self.main_menu_cursor = 0
+		self.track_opt_cursor = 0
+		self.bt_cursor = 0
 
 	def draw_status_bar(self, draw, heading = "default"):
 
@@ -432,16 +442,12 @@ class MintP3:
 
 	def draw_playing(self):
 		with canvas(self.device) as draw:
-			self.draw_status_bar(draw,"Now Playing") 
+			self.draw_status_bar(draw, "Now Playing") 
 			self.mainlabel.draw = self.secondlabel.draw = self.albumlabel.draw = self.time_label.draw = draw
 			
-			if self.mp3_player.is_media_loaded() and self.mp3_player.get_state() != "Stopped":
-				
-				# Standard "Now Playing" header				
+			if self.mp3_player.is_media_loaded() and self.mp3_player.get_state() not in ["Stopped", "Ended"]:
 				tags = self.mp3_player.get_id3_tags()
-				
 				if tags:
-					# Ensure values are strings to prevent NoneType subscripting error
 					title = tags.get('title') or 'Unknown'
 					artist = tags.get('artist') or 'Unknown Artist'
 					album = tags.get('album') or 'Unknown Album'
@@ -452,18 +458,24 @@ class MintP3:
 					self.albumlabel.set_string(str(album)[:22])
 					self.albumlabel.center(self.LAYOUT_Y_START + 25, 0, screen_w)
 
-				bar_x, bar_w = self.draw_progress_bar(draw, self.mp3_player.get_progress())
-				curr = self.mp3_player.get_time() / 1000
-				self.time_label.set_string(f"{int(curr//60)}:{int(curr%60):02d}")
-				self.time_label.push(bar_x - 26, self.PROGRESS_Y)
-				dur = self.mp3_player.player.get_media().get_duration() / 1000
-				rem = dur - curr
-				if rem > 0: 
-					self.time_label.set_string(f"-{int(rem//60)}:{int(rem%60):02d}")
-					self.time_label.push(bar_x + bar_w + 4, self.PROGRESS_Y)
+				if self.mp3_player.is_streaming:
+					# Draw "LIVE" instead of a progress bar
+					self.time_label.set_string("LIVE STREAM")
+					self.time_label.center(self.PROGRESS_Y, 0, screen_w)
+				else:
+					bar_x, bar_w = self.draw_progress_bar(draw, self.mp3_player.get_progress())
+					curr = self.mp3_player.get_current_time()
+					self.time_label.set_string(f"{int(curr//60)}:{int(curr%60):02d}")
+					self.time_label.push(bar_x - 26, self.PROGRESS_Y)
+					
+					dur = self.mp3_player.get_duration()
+					rem = dur - curr
+					if rem > 0: 
+						self.time_label.set_string(f"-{int(rem//60)}:{int(rem%60):02d}")
+						self.time_label.push(bar_x + bar_w + 4, self.PROGRESS_Y)
 			else: 
-				self.draw_scrolling_text("Stopped", self.HEADER_Y, self.titlefont, draw, max_w=90, scroll_var="header")
-
+				self.draw_status_bar(draw, "Stopped") 
+				
 	def draw_list_menu(self, title, items, current_idx):
 
 		with canvas(self.device) as draw:
@@ -584,10 +596,14 @@ try:
 
 		if status: webui.update_status(status)
 		if not hasattr(glob, 'eventlist') or len(glob.eventlist) < 2:
-			# Redraw loop for animations/scrolling even without input
-			if current_view == "playing": display.draw_playing()
+			# Redraw loop for animations/scrolling
+			if current_view == "playing": 
+				display.draw_playing()
 			elif current_view == "main_menu": 
-				display.draw_list_menu("Main Menu", ["Now Playing", "Library", "Settings", "About"], display.main_menu_cursor)
+				display.draw_list_menu("Main Menu", ["Now Playing", "Library", "Play Favourites", "Settings", "About"], display.main_menu_cursor)
+			elif current_view == "track_options":
+				opts = ["Add to Favourites", f"Shuffle: {'ON' if player._shuffle_enabled else 'OFF'}", "Song Info"]
+				display.draw_list_menu("Options", opts, display.track_opt_cursor)
 			elif current_view == "category_select": 
 				display.draw_list_menu("Browse", ["Song", "Artist", "Album"], display.cat_cursor)
 			elif current_view == "library_select": 
@@ -631,10 +647,25 @@ try:
 
 		if hold[2]: 
 			hold[2] = False
-			player.toggle_shuffle()
+			if current_view == "playing":
+				push_state()
+				current_view = "track_options"
+				display.track_opt_cursor = 0
+				
+				# Check if song is already in favourites to set initial menu state
+				display.fav_mode = "add" # Default
+				curr = player.get_current_song_info()
+				fav_path = os.path.join(player.music_dir, "favourites.m3u")
+				if curr and 'file_path' in curr and os.path.exists(fav_path):
+					with open(fav_path, 'r') as f:
+						# specific check to see if the unique file path exists in the file
+						if curr['file_path'] in f.read():
+							display.fav_mode = "remove"
+			else:
+				player.toggle_shuffle()
 
 		if current_view == "main_menu":
-			menu = ["Now Playing", "Library", "Settings", "MintPet", "About"]
+			menu = ["Now Playing", "Library", "Play Favourites", "Settings", "MintPet", "About"]
 			if btn[1]:
 				btn[1] = False
 				display.main_menu_cursor = (display.main_menu_cursor - 1) % len(menu)
@@ -643,12 +674,97 @@ try:
 				display.main_menu_cursor = (display.main_menu_cursor + 1) % len(menu)
 			if btn[2]:
 				btn[2] = False
-				push_state()
-				mapping = {0:"playing", 1:"category_select", 2:"settings", 3:"pet", 4:"about"}
-				current_view = mapping[display.main_menu_cursor]
-				display.header_title = menu[display.main_menu_cursor]
-				display.scroll_pos = 0; display.header_scroll_pos = 0
+				sel = menu[display.main_menu_cursor]
+				
+				if sel == "Play Favourites":
+					fav_path = os.path.join(player.music_dir, "favourites.m3u")
+					# Logic to load playlist
+					if os.path.exists(fav_path) and os.path.getsize(fav_path) > 0:
+						display.draw_message("Loading...", header="Favourites")
+						player.stop()
+						if player.play_playlist_file(fav_path):
+							current_view = "playing"
+						else:
+							display.draw_message("Error Loading", header="Favourites")
+							time.sleep(1)
+					else:
+						display.draw_message("List Empty", header="Favourites")
+						time.sleep(1.5)
+				else:
+					push_state()
+					# Update mapping to match the new menu order
+					mapping = {0:"playing", 1:"category_select", 3:"settings", 4:"pet", 5:"about"}
+					if display.main_menu_cursor in mapping:
+						current_view = mapping[display.main_menu_cursor]
+						display.header_title = menu[display.main_menu_cursor]
+					display.scroll_pos = 0; display.header_scroll_pos = 0
 			display.draw_list_menu("Main Menu", menu, display.main_menu_cursor)
+
+		elif current_view == "track_options":
+			# Dynamic text based on state
+			fav_text = "Remove from Favourites" if getattr(display, 'fav_mode', 'add') == "remove" else "Add to Favourites"
+			opts = [fav_text, f"Shuffle: {'ON' if player._shuffle_enabled else 'OFF'}", "Song Info"]
+			
+			if btn[1]: 
+				btn[1] = False
+				display.track_opt_cursor = (display.track_opt_cursor - 1) % len(opts)
+			if btn[3]: 
+				btn[3] = False
+				display.track_opt_cursor = (display.track_opt_cursor + 1) % len(opts)
+			if btn[2]:
+				btn[2] = False
+				
+				# Option 0: Add/Remove Favourites
+				if display.track_opt_cursor == 0:
+					curr_track = player.get_current_song_info()
+					if curr_track and 'file_path' in curr_track:
+						fav_path = os.path.join(player.music_dir, "favourites.m3u")
+						path = curr_track['file_path']
+						
+						if display.fav_mode == "remove":
+							# REMOVE LOGIC
+							if os.path.exists(fav_path):
+								lines = []
+								with open(fav_path, 'r') as f:
+									lines = f.readlines()
+								with open(fav_path, 'w') as f:
+									for line in lines:
+										if line.strip() != path:
+											f.write(line)
+								display.draw_message("Removed!", header="Favourites")
+								display.fav_mode = "add" # Toggle state
+						else:
+							# ADD LOGIC
+							exists = False
+							if os.path.exists(fav_path):
+								with open(fav_path, 'r') as f:
+									if path in f.read(): exists = True
+							
+							if not exists:
+								with open(fav_path, 'a') as f:
+									f.write(path + "\n")
+								display.draw_message("Added!", header="Favourites")
+								display.fav_mode = "remove" # Toggle state
+							else:
+								display.draw_message("Already Added", header="Favourites")
+						time.sleep(1)
+
+				# Option 1: Shuffle
+				elif display.track_opt_cursor == 1:
+					player.toggle_shuffle()
+
+				# Option 2: Song Info
+				elif display.track_opt_cursor == 2:
+					tags = player.get_id3_tags()
+					with canvas(display.device) as draw:
+						display.draw_status_bar(draw, "Song Info")
+						display.heading.draw = draw
+						display.heading.set_string(str(tags.get('title','Unknown'))[:20])
+						display.heading.center(25, 0, screen_w)
+						display.heading.set_string(str(tags.get('artist','Unknown'))[:20])
+						display.heading.center(40, 0, screen_w)
+					time.sleep(2.5)
+			display.draw_list_menu("Options", opts, display.track_opt_cursor)
 
 		elif current_view == "playing":
 			if btn[2]: 
@@ -664,9 +780,10 @@ try:
 				display.pet.on_track_change() # Pet gets "fed" by new music
 				display.scroll_pos = 0
 			display.draw_playing()
+			
 		
 		elif current_view == "category_select":
-			opts = ["Song", "Artist", "Album"]
+			opts = ["Song", "Artist", "Album", "Streams"]
 			if btn[1]: 
 				btn[1] = False
 				display.cat_cursor = (display.cat_cursor - 1) % len(opts)
@@ -675,9 +792,15 @@ try:
 			if btn[2]:
 				btn[2] = False
 				push_state()
-				c_type = ["song", "artist", "album"][display.cat_cursor]
+				c_mapping = ["song", "artist", "album", "streams"]
+				c_type = c_mapping[display.cat_cursor]
 				display.draw_message("Loading...", header=opts[display.cat_cursor])
-				display.filtered_items = ["Play All"] + player.get_unique_metadata(c_type)
+				
+				if c_type == "streams":
+					display.filtered_items = list(STREAMS.keys())
+				else:
+					display.filtered_items = ["Play All"] + player.get_unique_metadata(c_type)
+					
 				display.item_cursor = 0
 				display.library_level = 0
 				display.header_title = opts[display.cat_cursor]
@@ -696,9 +819,15 @@ try:
 			if btn[2]:
 				btn[2] = False
 				sel = display.filtered_items[display.item_cursor]
-				c_type = ["song", "artist", "album"][display.cat_cursor]
+				c_type = ["song", "artist", "album", "streams"][display.cat_cursor]
 				
-				if sel == "Play All":
+				if c_type == "streams":
+					display.draw_message("Connecting...", header=sel)
+					stream_url = STREAMS[sel]
+					player.play_stream(stream_url)
+					current_view = "playing"
+					display.scroll_pos = 0
+				elif sel == "Play All":
 					display.draw_message("Loading...", header=sel)
 					push_state()
 					if display.library_level == 1: 
@@ -707,6 +836,8 @@ try:
 						player.filter_playlist("album", display.selected_album, artist_context=display.selected_artist)
 					else: 
 						player.filter_playlist(None, None)
+					player.stop_stream() # Ensure stream is killed when returning to local
+					player.filter_playlist(None, None) 
 					current_view = "playing"
 					display.scroll_pos = 0
 				elif c_type == "artist" and display.library_level == 0:
@@ -727,10 +858,15 @@ try:
 					display.filtered_items = ["Play All"] + player.get_unique_metadata("song", artist_filter=display.selected_artist, album_filter=sel)
 					display.item_cursor = 0
 					display.header_scroll_pos = 0
+				elif (c_type == "streams" or display.library_level == 1) and display.library_level < 2:
+					display.draw_message("Loading...", header=sel)
+					push_state()
+					current_view = "browse_streams"
+					display.scroll_pos = 0
 				else: 
 					display.draw_message("Loading...", header=sel)
+					player.stop_stream() # Ensure stream is killed
 					player.filter_playlist("song", sel)
-					push_state()
 					current_view = "playing"
 					display.scroll_pos = 0
 
@@ -773,6 +909,30 @@ try:
 					elif display.cursor_idx == 1: backstat = not backstat; display.device.backlight(not backstat)
 					elif display.cursor_idx == 2: player.set_volume(max(0, min(100, player.get_volume() + (ch * 5))))
 			display.draw_settings(player._shuffle_enabled, backstat, player.get_volume())
+
+		elif current_view == "browse_streams":
+			stream_names = list(STREAMS.keys())
+			display.draw_list("Streams", stream_names)
+			
+			if btn[1]: # Up
+				btn[1] = False
+				display.cursor = (display.cursor - 1) % len(stream_names)
+			if btn[3]: # Down
+				btn[3] = False
+				display.cursor = (display.cursor + 1) % len(stream_names)
+			if btn[2]: # Select
+				btn[2] = False
+				stream_name = stream_names[display.cursor]
+				stream_url = STREAMS[stream_name]
+				player.play_stream(stream_url)
+				# Go back to main menu or stay? Let's go to now playing
+				current_view = "now_playing"
+			if btn[0]: # Back
+				btn[0] = False
+				if view_stack:
+					state = view_stack.pop()
+					current_view = state['view']
+					display.cursor = state['cursor']
 
 		elif current_view == "wifi_menu":
 					wf_on = conn.is_wifi_on()
@@ -911,7 +1071,7 @@ try:
 					display.pet_cursor = (display.pet_cursor + 1) % 3
 
 			# The Pet class now handles its own rendering entirely
-			display.pet.draw(display.device, font, display.pet_cursor, pet_menu_active)
+			display.pet.draw(display, font, display.pet_cursor, pet_menu_active)
 
 		elif current_view == "about":
 			if btn[1] or btn[2] or btn[3]:
